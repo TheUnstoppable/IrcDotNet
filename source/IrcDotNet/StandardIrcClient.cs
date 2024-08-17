@@ -117,7 +117,7 @@ namespace IrcDotNet
                 throw new ArgumentException(string.Format(Resources.MessageInvalidUrlScheme,
                     url.Scheme), "url");
 
-            Connect(url.Host, url.Port == -1 ? DefaultPort : url.Port, useSsl, registrationInfo);
+            Connect(url.Host, url.Port == -1 ? DefaultPort : url.Port, useSsl, registrationInfo, certCallback);
         }
 
         /// <inheritdoc cref="Connect(string, int, bool, IrcRegistrationInfo)" />
@@ -128,7 +128,7 @@ namespace IrcDotNet
             if (registrationInfo == null)
                 throw new ArgumentNullException("registrationInfo");
 
-            Connect(hostName, DefaultPort, useSsl, registrationInfo);
+            Connect(hostName, DefaultPort, useSsl, registrationInfo, certCallback);
         }
 
         /// <inheritdoc cref="Connect(EndPoint, bool, IrcRegistrationInfo)" />
@@ -146,19 +146,19 @@ namespace IrcDotNet
 
             Connect(new IPEndPoint(addresses[0], port), useSsl, registrationInfo);
 #else
-            Connect(new DnsEndPoint(hostName, port), useSsl, registrationInfo);
+            Connect(new DnsEndPoint(hostName, port), useSsl, registrationInfo, certCallback);
 #endif
         }
 
         /// <inheritdoc cref="Connect(IPAddress, int, bool, IrcRegistrationInfo)" />
-        public void Connect(IPAddress address, bool useSsl, IrcRegistrationInfo registrationInfo)
+        public void Connect(IPAddress address, bool useSsl, IrcRegistrationInfo registrationInfo, Func<X509Certificate2Collection> certCallback = null)
         {
             CheckDisposed();
 
             if (registrationInfo == null)
                 throw new ArgumentNullException("registrationInfo");
 
-            Connect(address, DefaultPort, useSsl, registrationInfo);
+            Connect(address, DefaultPort, useSsl, registrationInfo, certCallback);
         }
 
         /// <inheritdoc cref="Connect(EndPoint, bool, IrcRegistrationInfo)" />
@@ -171,7 +171,7 @@ namespace IrcDotNet
             if (registrationInfo == null)
                 throw new ArgumentNullException("registrationInfo");
 
-            Connect(new IPEndPoint(address, port), useSsl, registrationInfo);
+            Connect(new IPEndPoint(address, port), useSsl, registrationInfo, certCallback);
         }
 
         /// <summary>
