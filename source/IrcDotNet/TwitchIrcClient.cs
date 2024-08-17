@@ -2,15 +2,16 @@
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
+using System.Security.Cryptography.X509Certificates;
 
 namespace IrcDotNet
 {
     public class TwitchIrcClient : StandardIrcClient
     {
-        public override void Connect(EndPoint remoteEndPoint, bool useSsl, IrcRegistrationInfo registrationInfo)
+        public override void Connect(EndPoint remoteEndPoint, bool useSsl, IrcRegistrationInfo registrationInfo, Func<X509Certificate2Collection> certCallback = null)
         {
             registrationInfo.NickName = registrationInfo.NickName.ToLower();
-            base.Connect(remoteEndPoint, useSsl, registrationInfo);
+            base.Connect(remoteEndPoint, useSsl, registrationInfo, certCallback);
         }
 
         protected override void WriteMessage(string message, object token = null)

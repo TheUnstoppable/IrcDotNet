@@ -324,9 +324,9 @@ namespace IrcDotNet
 
         internal void HandleUserNameReply(IrcChannelUser channelUser)
         {
-            lock (((ICollection) Modes).SyncRoot)
+            lock (((ICollection)Users).SyncRoot)
             {
-                if (users.Contains(channelUser))
+                if (users.Contains(channelUser) || users.Any(x => x.User.NickName == channelUser.User.NickName))
                 {
 #if SILVERLIGHT
                     Debug.Assert(false, "User already in channel.");
@@ -335,11 +335,10 @@ namespace IrcDotNet
 #endif
                     return;
                 }
-            }
 
-            channelUser.Channel = this;
-            lock (((ICollection) Users).SyncRoot)
+                channelUser.Channel = this;
                 users.Add(channelUser);
+            }
         }
 
         internal void HandleTypeChanged(IrcChannelType type)
@@ -371,9 +370,9 @@ namespace IrcDotNet
 
         internal void HandleUserJoined(IrcMessage ircMessage, IrcChannelUser channelUser)
         {
-            lock (((ICollection) Modes).SyncRoot)
+            lock (((ICollection) Users).SyncRoot)
             {
-                if (users.Contains(channelUser))
+                if (users.Contains(channelUser) || users.Any(x => x.User.NickName == channelUser.User.NickName))
                 {
 #if SILVERLIGHT
                 Debug.Assert(false, "User already in channel.");
@@ -382,11 +381,10 @@ namespace IrcDotNet
 #endif
                     return;
                 }
-            }
 
-            channelUser.Channel = this;
-            lock (((ICollection) Users).SyncRoot)
+                channelUser.Channel = this;
                 users.Add(channelUser);
+            }
 
             OnUserJoined(new IrcChannelUserEventArgs(ircMessage, channelUser, null));
         }

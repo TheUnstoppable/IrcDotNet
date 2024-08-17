@@ -2076,7 +2076,7 @@ namespace IrcDotNet
                 IDictionary<string, string> tags = null)
             {
                 Prefix = prefix;
-                Command = command.ToUpper();
+                Command = command.ToUpperInvariant();
                 Parameters = parameters;
                 Tags = tags;
 

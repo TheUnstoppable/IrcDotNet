@@ -1,9 +1,10 @@
-using System;
+﻿using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
 using System.Net;
 using System.Net.Sockets;
+using System.Security.Authentication;
 using System.Security.Cryptography.X509Certificates;
 using System.Threading;
 using IrcDotNet.Properties;
@@ -22,7 +23,6 @@ namespace IrcDotNet
 
         // Size of buffer for data received by socket, in bytes.
         private const int socketReceiveBufferSize = 0xFFFF;
-        private Stream dataStream;
         private SafeLineReader dataStreamLineReader;
         private StreamReader dataStreamReader;
         private AutoResetEvent disconnectedEvent;
@@ -34,6 +34,7 @@ namespace IrcDotNet
 
         // Network (TCP) I/O.
         private Socket socket;
+        private Stream remoteStream;
 
         public StandardIrcClient()
         {
@@ -71,11 +72,6 @@ namespace IrcDotNet
                     receiveStream.Dispose();
                     receiveStream = null;
                 }
-                if (dataStream != null)
-                {
-                    dataStream.Dispose();
-                    dataStream = null;
-                }
                 if (dataStreamReader != null)
                 {
                     dataStreamReader.Dispose();
@@ -104,7 +100,7 @@ namespace IrcDotNet
         /// <summary>
         ///     Connects to a server using the specified URL and user information.
         /// </summary>
-        public void Connect(Uri url, IrcRegistrationInfo registrationInfo)
+        public void Connect(Uri url, IrcRegistrationInfo registrationInfo, Func<X509Certificate2Collection> certCallback = null)
         {
             CheckDisposed();
 
@@ -125,7 +121,7 @@ namespace IrcDotNet
         }
 
         /// <inheritdoc cref="Connect(string, int, bool, IrcRegistrationInfo)" />
-        public void Connect(string hostName, bool useSsl, IrcRegistrationInfo registrationInfo)
+        public void Connect(string hostName, bool useSsl, IrcRegistrationInfo registrationInfo, Func<X509Certificate2Collection> certCallback = null)
         {
             CheckDisposed();
 
@@ -138,7 +134,7 @@ namespace IrcDotNet
         /// <inheritdoc cref="Connect(EndPoint, bool, IrcRegistrationInfo)" />
         /// <param name="hostName">The name of the remote host.</param>
         /// <param name="port">The port number of the remote host.</param>
-        public void Connect(string hostName, int port, bool useSsl, IrcRegistrationInfo registrationInfo)
+        public void Connect(string hostName, int port, bool useSsl, IrcRegistrationInfo registrationInfo, Func<X509Certificate2Collection> certCallback = null)
         {
             CheckDisposed();
 
@@ -168,7 +164,7 @@ namespace IrcDotNet
         /// <inheritdoc cref="Connect(EndPoint, bool, IrcRegistrationInfo)" />
         /// <param name="address">An IP addresses that designates the remote host.</param>
         /// <param name="port">The port number of the remote host.</param>
-        public void Connect(IPAddress address, int port, bool useSsl, IrcRegistrationInfo registrationInfo)
+        public void Connect(IPAddress address, int port, bool useSsl, IrcRegistrationInfo registrationInfo, Func<X509Certificate2Collection> certCallback = null)
         {
             CheckDisposed();
 
@@ -201,11 +197,11 @@ namespace IrcDotNet
         ///     information.
         /// </exception>
         /// <exception cref="ObjectDisposedException">The current instance has already been disposed.</exception>
-        public virtual void Connect(EndPoint remoteEndPoint, bool useSsl, IrcRegistrationInfo registrationInfo)
+        public virtual void Connect(EndPoint remoteEndPoint, bool useSsl, IrcRegistrationInfo registrationInfo, Func<X509Certificate2Collection> certCallback = null)
         {
             Connect(registrationInfo);
             // Connect socket to remote host.
-            ConnectAsync(remoteEndPoint, Tuple.Create(useSsl, string.Empty, registrationInfo));
+            ConnectAsync(remoteEndPoint, Tuple.Create(useSsl, string.Empty, registrationInfo, certCallback));
 
             HandleClientConnecting();
         }
@@ -224,8 +220,6 @@ namespace IrcDotNet
             // Reset network I/O objects.
             if (receiveStream != null)
                 receiveStream.Dispose();
-            if (dataStream != null)
-                dataStream.Dispose();
             if (dataStreamReader != null)
                 dataStreamReader = null;
         }
@@ -296,29 +290,17 @@ namespace IrcDotNet
 
         private void SendAsync(byte[] buffer, int offset, int count, object token = null)
         {
-            // Write data from buffer to socket asynchronously.
-            var sendEventArgs = new SocketAsyncEventArgs();
-            sendEventArgs.SetBuffer(buffer, offset, count);
-            sendEventArgs.UserToken = token;
-            sendEventArgs.Completed += SendCompleted;
-
-            if (!socket.SendAsync(sendEventArgs))
-                SendCompleted(socket, sendEventArgs);
+            remoteStream.BeginWrite(buffer, offset, count, SendCompleted, token);
         }
 
-        private void SendCompleted(object sender, SocketAsyncEventArgs e)
+        private void SendCompleted(IAsyncResult result)
         {
             try
             {
-                if (e.SocketError != SocketError.Success)
-                {
-                    HandleSocketError(e.SocketError);
-                    return;
-                }
+                remoteStream.EndWrite(result);
 
                 // Handle sent IRC message.
-                Debug.Assert(e.UserToken != null);
-                var messageSentEventArgs = (IrcRawMessageEventArgs) e.UserToken;
+                var messageSentEventArgs = (IrcRawMessageEventArgs) result.AsyncState;
                 OnRawMessageSent(messageSentEventArgs);
 
 #if DEBUG
@@ -335,44 +317,29 @@ namespace IrcDotNet
                 OnError(new IrcErrorEventArgs(ex));
             }
 #endif
-            finally
-            {
-                e.Dispose();
-            }
         }
 
         private void ReceiveAsync()
         {
-            // Read data received from socket to buffer asynchronously.
-            var receiveEventArgs = new SocketAsyncEventArgs();
-            Debug.Assert(receiveStream.Buffer.Length - (int) receiveStream.WritePosition > 0);
-            receiveEventArgs.SetBuffer(receiveStream.Buffer, (int) receiveStream.WritePosition,
-                receiveStream.Buffer.Length - (int) receiveStream.WritePosition);
-            receiveEventArgs.Completed += ReceiveCompleted;
-
-            if (!socket.ReceiveAsync(receiveEventArgs))
-                ReceiveCompleted(socket, receiveEventArgs);
+            remoteStream.BeginRead(receiveStream.Buffer, (int)receiveStream.WritePosition,
+                receiveStream.Buffer.Length - (int)receiveStream.WritePosition, ReceiveCompleted, null);
         }
 
-        private void ReceiveCompleted(object sender, SocketAsyncEventArgs e)
+        private void ReceiveCompleted(IAsyncResult result)
         {
             try
             {
-                if (e.SocketError != SocketError.Success)
-                {
-                    HandleSocketError(e.SocketError);
-                    return;
-                }
+                var bytesRead = remoteStream.EndRead(result);
 
                 // Check if remote host has closed connection.
-                if (e.BytesTransferred == 0)
+                if (bytesRead == 0)
                 {
                     Disconnect();
                     return;
                 }
 
                 // Indicate that block of data has been read into receive buffer.
-                receiveStream.WritePosition += e.BytesTransferred;
+                receiveStream.WritePosition += bytesRead;
                 dataStreamReader.DiscardBufferedData();
 
                 // Read each terminated line of characters from data stream.
@@ -405,10 +372,6 @@ namespace IrcDotNet
                 OnError(new IrcErrorEventArgs(ex));
             }
 #endif
-            finally
-            {
-                e.Dispose();
-            }
         }
 
         private void ConnectAsync(EndPoint remoteEndPoint, object token = null)
@@ -434,16 +397,12 @@ namespace IrcDotNet
                 }
 
                 Debug.Assert(e.UserToken != null);
-                var token = (Tuple<bool, string, IrcRegistrationInfo>) e.UserToken;
+                var token = (Tuple<bool, string, IrcRegistrationInfo, Func<X509Certificate2Collection>>) e.UserToken;
 
                 // Create stream for received data. Use SSL stream on top of network stream, if specified.
+                remoteStream = GetDataStream(token.Item1, token.Item2, token.Item4);
                 receiveStream = new CircularBufferStream(socketReceiveBufferSize);
-#if SILVERLIGHT
-                this.dataStream = this.receiveStream;
-#else
-                dataStream = GetDataStream(token.Item1, token.Item2);
-#endif
-                dataStreamReader = new StreamReader(dataStream, TextEncoding);
+                dataStreamReader = new StreamReader(receiveStream, TextEncoding);
                 dataStreamLineReader = new SafeLineReader(dataStreamReader);
 
                 // Start sending and receiving data to/from server.
@@ -518,6 +477,12 @@ namespace IrcDotNet
             finally
             {
                 e.Dispose();
+
+                if (remoteStream != null)
+                {
+                    remoteStream.Dispose();
+                    remoteStream = null;
+                }
             }
         }
 
@@ -579,25 +544,29 @@ namespace IrcDotNet
 
 #if !SILVERLIGHT
 
-        private Stream GetDataStream(bool useSsl, string targetHost)
+        private Stream GetDataStream(bool useSsl, string targetHost, Func<X509Certificate2Collection> certCallback)
         {
+            var networkStream = new NetworkStream(socket);
+
             if (useSsl)
             {
                 // Create SSL stream over network stream to use for data transmission.
-                var sslStream = new SslStream(receiveStream, true,
+                var sslStream = new SslStream(networkStream, true,
                     SslUserCertificateValidationCallback);
 
-#if NETSTANDARD1_5
-                var authTask = sslStream.AuthenticateAsClientAsync(targetHost);
-                authTask.Wait();
-#else
-                sslStream.AuthenticateAsClient(targetHost);
-#endif
-                Debug.Assert(sslStream.IsAuthenticated);
+                if (certCallback != null)
+                {
+                    sslStream.AuthenticateAsClient(targetHost, certCallback(), false);
+                }
+                else
+                {
+                    sslStream.AuthenticateAsClient(targetHost);
+                }
+
                 return sslStream;
             }
             // Use network stream directly for data transmission.
-            return receiveStream;
+            return networkStream;
         }
 
         private bool SslUserCertificateValidationCallback(object sender, X509Certificate certificate, X509Chain chain,
