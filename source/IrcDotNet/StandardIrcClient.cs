@@ -551,7 +551,7 @@ namespace IrcDotNet
             if (useSsl)
             {
                 // Create SSL stream over network stream to use for data transmission.
-                var sslStream = new SslStream(networkStream, true,
+                var sslStream = new SslStream(networkStream, false,
                     SslUserCertificateValidationCallback);
 
                 if (certCallback != null)
